@@ -1,13 +1,14 @@
 G52AFP Coursework 1 - Connect Four Game
    
-Your full name(s)
-Your full email address(es)
+Thomas Cameron Gregory Dudley
+psytcd@nottingham.ac.uk
 
 ----------------------------------------------------------------------
 
 > import Data.List (isInfixOf, transpose)
 > import Data.Sequence (Seq, fromList, update, index)
 > import Data.Foldable (toList)
+> import Data.Char (digitToInt)
 
 ----------------------------------------------------------------------
 
@@ -26,12 +27,16 @@ board, length of a winning sequence, and search depth for the game tree:
 > depth :: Int
 > depth = 6
 
-The board itself is represented as a list of rows, where each row is
+The board itself is represented as a list of rows where each row is
 a list of player values, subject to the above row and column sizes:
 
 > type Board = [Row]
->
+
 > type Row = [Player]
+
+> type SBoard = Seq SRow
+
+> type SRow   = Seq Player
 
 In turn, a player value is either a nought, a blank, or a cross, with
 a blank representing a position on the board that is not yet occupied:
@@ -103,6 +108,7 @@ http://hackage.haskell.org/package/universe-base-1.0.2.1
 insertion:
 for clarity we convert our boards as matrixes to sequences, as these support updating items via index
 using the update function. https://hackage.haskell.org/package/containers-0.2.0.1/docs/Data-Sequence.html
+The update method gives us a performance benefit, although the cost of conversion outweighs this so its mostly just for clarity.
 
 > insertAt         :: Int -> Int -> Player -> Board -> Board
 > insertAt x y p b =  toBoard(doubleUpdate x y p (toSequence b))
@@ -115,6 +121,7 @@ using the update function. https://hackage.haskell.org/package/containers-0.2.0.
 
 > toBoard :: Seq (Seq Player) -> Board
 > toBoard =  (map toList).toList
+
 
 Get remaining spaces in a column:
 
@@ -162,8 +169,48 @@ Win Checking:
 >                 any (winRow p) (getCols b) ||
 >                 any (winRow p) (getDiags b)				
 
+Check if board full:
+
+> full :: Board -> Bool
+> full = (notElem B).concat
+
 ----------------------------------------------------------------------
 Make a move:
 
 > move       :: Int -> Player -> Board -> Board
 > move x p b =  insertAt x (next(getCols b !! x)) p b
+
+Get input:
+
+> input      :: Player -> IO Int
+> input p     =  do putStrLn("Enter your move player "++show p++":")
+>                   line <- getLine
+>                   let i = read(line)
+>                   return i
+
+----------------------------------------------------------------------
+Our game loop:
+
+> play   :: Board -> IO ()
+> play b | winBoard X b = putStrLn "Player X won!"
+>        | winBoard O b = putStrLn "Player O won!"
+>		 | full b       = putStrLn "Its a draw."
+>		 | otherwise    = do 
+>                            let p = turn b
+>                            k  <- input p
+>                            let nb = move k p b
+>                            showBoard(nb)
+>                            play nb
+
+> main   :: IO ()
+> main   =  do showBoard empty
+>              play empty
+
+---------------------------------------------------------------------
+Minimax types:
+
+> data Tree a = Node a [Tree a]
+
+moves :: SBoard -> Seq SBoard
+
+growTree :: Board -> Tree SBoard
