@@ -36,6 +36,10 @@ rather than having to transpose whenever we want to make a move:
 
 > type Col = [Player]
 
+> type SBoard = Seq SCol
+
+> type SCol   = Seq Player
+
 In turn, a player value is either a nought, a blank, or a cross, with
 a blank representing a position on the board that is not yet occupied:
 
@@ -56,6 +60,18 @@ The following code displays a board on the screen:
 > showPlayer B = '.'
 > showPlayer X = 'X'
 
+> sshowBoard :: SBoard -> IO ()
+> sshowBoard b = putStrLn (unlines (map sshowRow (getRows (toBoard b)) ++ [line] ++ [nums]))
+>               where
+>                  sshowRow = map sshowPlayer
+>                  line    = Prelude.replicate cols '-'
+>                  nums    = take cols ['0'..]
+>
+> sshowPlayer :: Player -> Char
+> sshowPlayer O = 'O'
+> sshowPlayer B = '.'
+> sshowPlayer X = 'X'
+
 ----------------------------------------------------------------------
 Test Boards
 
@@ -64,6 +80,9 @@ The initial empty board:
 
 > empty :: Board
 > empty =  Prelude.replicate cols (Prelude.replicate rows B)
+
+> sempty :: SBoard
+> sempty  =  Data.Sequence.replicate cols (Data.Sequence.replicate rows B)
 
 A board for testing, note how the board is "sideways"
 The top right cell is 0,0 and pieces "fall" from left to right down each column:
@@ -78,14 +97,8 @@ The top right cell is 0,0 and pieces "fall" from left to right down each column:
 >               [B,X,X,O,X,O]]
 
 
-> fullboard :: Board
-> fullboard =  [[B,X,O,X,O,X],
->               [X,O,X,O,X,O],
->		        [O,X,O,X,O,O],
->		        [X,X,O,X,O,X],
->		        [O,X,O,O,O,X],
->		        [X,X,X,X,O,X],
->               [O,X,X,O,X,O]]
+> stestboard :: SBoard
+> stestboard =  toSequence testboard
 
 ----------------------------------------------------------------------
 Utility functions:
@@ -126,10 +139,10 @@ The update method gives us a performance benefit, although the cost of conversio
 > doubleUpdate         :: Int -> Int -> a -> Seq( Seq a) -> Seq (Seq a)
 > doubleUpdate x y a s =  update x (update y a (index s x)) s
 
-> toSequence :: Board -> Seq (Seq Player)
+> toSequence :: Board -> SBoard
 > toSequence =  fromList.(map fromList)
 
-> toBoard :: Seq (Seq Player) -> Board
+> toBoard :: SBoard -> Board
 > toBoard =  (map toList).toList
 
 
@@ -143,16 +156,44 @@ get the next index to insert at:
 > next    :: Col -> Int
 > next c  =  (free c) - 1
 
+
+Sequence versions (trying to remove lists from the program entirely):
+
+> sgetCols :: SBoard -> Seq SCol
+> sgetCols = id
+
+> sgetRows :: SBoard -> Seq SCol
+> sgetRows =  toSequence.transpose.toBoard
+
+> sgetDiags :: SBoard -> Seq SCol
+> sgetDiags = toSequence.getDiags.toBoard
+
+
+> smove      :: Int -> Player -> SBoard -> SBoard
+> smove x p b =  doubleUpdate x (snext (b `index` x)) p b
+
+> sfree    :: SCol -> Int
+> sfree    =  ((-)rows).length.dropWhileL(==B)
+
+> snext    :: SCol -> Int
+> snext c  =  (sfree c) - 1
+
 ----------------------------------------------------------------------
 Count player in column
 
 > countCol    :: Player -> Col -> Int
 > countCol p  =  (length . Prelude.filter (== p))
 
+> scountCol    :: Player -> SCol -> Int
+> scountCol p  =  (length . Data.Sequence.filter (== p))
+
 Count player in board
 
 > countBoard     :: Player -> Board -> Int
 > countBoard p b  = sum (map (countCol p) b)
+
+> scountBoard    :: Player -> SBoard -> Int
+> scountBoard p b = sum (fmap (scountCol p) b)
 
 ----------------------------------------------------------------------
 Turn checking:
@@ -167,6 +208,16 @@ otherwise it is O's go.
 > turn               :: Board -> Player
 > turn b | isEqual b = X
 >        | otherwise = O
+
+
+sequence versions
+
+> sisEqual    :: SBoard -> Bool
+> sisEqual b  =  (scountBoard X b) == (scountBoard O b)
+
+> sturn              :: SBoard -> Player
+> sturn b | sisEqual b = X
+>         | otherwise  = O
 
 ----------------------------------------------------------------------
 Win Checking:
@@ -222,14 +273,11 @@ Our game loop:
 Minimax types:
 
 > data Tree a = Node a [Tree a]
->                    deriving Show
 
-> moves                 :: Player -> Board -> [Board]
-> moves p b | full b    = []
->           | otherwise =  [move i p b | i <- [0..(cols-1)]]
 
-> growTree   :: Board -> Tree Board
-> growTree b = Node b (map growTree (moves (turn b) b))
+
+smoves    :: Player -> SBoard -> Seq SBoard
+smoves p  = do 
 
 sgrowTree :: Board -> Tree SBoard
 
