@@ -1,48 +1,47 @@
+import Data.Sequence (Seq, fromList, update, index)
+import Data.Foldable (toList)
+
+
 type Room = Matrix Tile
 type Display = Matrix Char
-type Matrix a = [Row a]
-type Row a = [a]
+type Matrix a = Seq (Row a)
+type Row a = Seq a
 type Tile = [Entity]
 type Graphic = Char
 data Point = Point Int Int deriving(Show)
 data Object = Object { name :: String
                      , description :: String
+                     , position :: Point
                      } deriving(Show)
-					 
+           
 data Character = Character { object :: Object
-                           , hp :: Int
-                           , position :: Point                         
+                           , hp :: Int                         
                            } deriving(Show)
-						   
+               
 data Orientation = Vertical | Horizontal deriving(Show)
 
 data Entity = Player Character | Wall Object Orientation | Floor Object | Blank | Enemy Character deriving(Show)
 
-main            :: IO ()
-main            =  putStrLn (unlines (drawRoom (readRoom (testRoom))))
-
-wall :: Object
+wall :: Point -> Object
 wall =  Object "Wall" "A stone wall."
 
-fl :: Object
+fl :: Point -> Object
 fl = Object "Floor" "A stone floor tile."
 
 player  :: Point -> Entity
-player p =  Player (Character (Object "Steve" "An adventurer") 10 p)
+player p =  Player (Character (Object "Steve" "An adventurer" p) 10)
 
 emu  :: Point -> Entity
-emu p =  Enemy (Character (Object "Emu" "A flightless bird") 2 p)
+emu p =  Enemy (Character (Object "Emu" "A flightless bird" p) 2)
 
 testRoom :: Display
-testRoom = ["          "
-           ,"  ------  "
-           ,"  |....|  "
-           ,"  |....|  "
-           ,"  |....|  "
-           ,"  ------  "
-           ,"          "]
-           
---addEntity :: Entity -> Room -> Room
+testRoom = fromList["          "
+                   ,"  ------  "
+                   ,"  |....|  "
+                   ,"  |....|  "
+                   ,"  |....|  "
+                   ,"  ------  "
+                   ,"          "]
 
 
 drawRoom :: Room -> Display
@@ -60,7 +59,7 @@ graphics (Wall _ Horizontal)  = '-'
 graphics (Wall _ Vertical)    = '|'
 graphics (Floor _)            = '.'
 graphics (Blank)              = ' '
-graphics (Enemy _)              = 'E'
+graphics (Enemy _)            = 'E'
 
 readChar                      ::  Graphic -> Entity
 readChar ' '                  =   Blank
