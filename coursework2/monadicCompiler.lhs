@@ -161,17 +161,19 @@ compprog :: Prog -> Label -> (Code, Label)
 > compprog :: Prog -> Label -> (Code, Label)
 > compprog (Seq []) l = ([],l)
 > compprog (Assign n expr) l = (compexpr expr ++ [POP n],l)
-> compprog (If expr p1 p2) l = (compexpr expr ++ [JUMPZ l] ++ fst(compprog p2 lEL) ++ [JUMP l'] ++ [LABEL l] ++ fst(compprog p1 lIF) ++ [LABEL l'],lNext)
+> compprog (If expr p1 p2) l = (compexpr expr ++ [JUMPZ l] ++ fst(codeIf, nlIf) ++ [JUMP l'] ++ [LABEL l] ++ fst(codeElse, nlElse) ++ [LABEL l'],lNext)
 >                               where l' = l+1
->                                     lEL = l'+1
->                                     lIF = snd(compprog p2 lEL)+1
->                                     lNext = snd(compprog p1 lIF)+1
-> compprog (While expr p)  l = ([LABEL l] ++ compexpr expr ++ [JUMPZ l'] ++ fst(compprog p lsub) ++ [JUMP l, LABEL l'],lNext)
+>                                     (codeIf, nlIf) = compprog p1 (l+2)
+>                                     (codeElse, nlElse) = compprog p2 (snd(codeIf, nlIf))
+>                                     lNext = snd(codeElse, nlElse)
+> compprog (While expr p)  l = ([LABEL l] ++ compexpr expr ++ [JUMPZ l'] ++ fst(codep, lp) ++ [JUMP l, LABEL l'],lNext)
 >                               where l' = l+1
->                                     lsub = l'+1
->                                     lNext = snd(compprog p lsub)
-> compprog (Seq (p:ps))      l = (fst(compprog p l) ++ fst(compprog (Seq ps) l'),l)
->                               where l' = snd(compprog p l)
+>                                     (codep, lp) = compprog p (l+2)
+>                                     lNext = snd(codep, lp)
+> compprog (Seq (p:ps))      l = (fst(codep, lp) ++ fst(codeps, lps),lNext)
+>                               where (codep, lp) = compprog p l
+>                                     (codeps, lps) = compprog (Seq ps) lp
+>                                     lNext = snd(codeps,lps)
 
 label is behaving like a state, so a nicer way to write this function is using monads to produce:
 
@@ -210,8 +212,8 @@ If e then p else q --->
 
 code for e
 JUMPZ L1
-code for q
+code for p
 JUMP L2
 LABEL L1
-code for p
+code for q
 LABEL L2
