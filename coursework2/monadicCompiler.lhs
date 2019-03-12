@@ -1,3 +1,7 @@
+> import Data.List (elemIndices)
+> import Control.Lens ((^?),element)
+> import Data.Maybe
+
 The Language
 
 > data Prog = Assign Name Expr
@@ -26,7 +30,7 @@ To simplify things we are saying you can only have single character variable nam
 > type Name = Char
 
 > data Op = Add | Sub | Mul | Div
->           deriving Show
+>           deriving (Show, Eq)
 
 In our language we will use 0 as False, same convention as C/Java
 
@@ -55,6 +59,12 @@ Seq [Assign 'A' (Val 1),
 -----------------------------------------------------------------------------------
 Virtual Machine
 
+> data Machine = M { stack :: Stack,
+>                    mem   :: Mem,
+>                    pc    :: PC,
+>                    code  :: Code }
+>                    deriving Show
+
 our machine shall use a Stack
 
 > type Stack = [Int]
@@ -66,6 +76,8 @@ s = [1,2,3]
 Our machine also needs some memory
 
 > type Mem = [(Name,Int)]
+
+> type PC  = Int
 
 Ours is a list of addresses, with names, and values at the address.
 
@@ -80,7 +92,7 @@ Our machine also needs some code, an instruction set.
 >           | JUMP Label
 >           | JUMPZ Label
 >           | LABEL Label
->             deriving Show
+>             deriving (Show, Eq)
 
 > type Label = Int
 
@@ -134,11 +146,95 @@ example, assign two values to two variables, A and B, if they are the same do fa
 --------------------------------------------------------------------------------------------
 Execution Function
 
-exec :: Code -> Mem
+> exec   :: Code -> Mem
+> exec c =  mem(snd(app (run) M {stack = [], mem = [], pc = 0, code = c}))
+
+> run  :: ST Machine ()
+> run  = do co <- get code
+>           c  <- get pc
+>           let l = co ^? element c
+>           if (l /= Nothing) then 
+>             step (fromJust l) >>
+>             next >>
+>             run
+>           else
+>             update id         
+
+> step :: Inst -> ST Machine ()
+> step (PUSH i)  = push i
+> step (PUSHV n) = pushv n
+> step (POP n)   = pop n
+> step (DO op)   = doo op
+> step (JUMP l)  = jump l
+> step (JUMPZ l) = do i <- ipop
+>                     if(i == 0) then jump l else update id
+> step (LABEL _) = update id
+
+
+get and upate are generic functions for manipulating our machine
+wrapped up in a State Transformer
+
+> next :: ST Machine ()
+> next = update (\m -> m {pc = (pc m)+1})
+
+> get :: (Machine -> a) -> ST Machine a
+> get f = S (\m -> (f m,m))
+
+> update   :: (Machine -> Machine) -> ST Machine ()
+> update f = S (\m -> ((),f m))
+
+> ipop :: ST Machine Int
+> ipop = do x:xs <- get stack
+>           update (\m -> m {stack = xs})
+>           return x
+
+> pop   :: Name -> ST Machine ()
+> pop n = do i <- ipop
+>            me <- get mem
+>            let xs = takeWhile(nmatch) me
+>                ys = drop 1 $ dropWhile(nmatch) me
+>                nmatch = ((/=n).fst)
+>            update (\m -> m {mem = xs ++ (n,i): ys})
+
+
+> push :: Int -> ST Machine ()
+> push i = update (\m -> m {stack = i:stack m})
+
+> pushv  :: Name -> ST Machine ()
+> pushv n = do (n',i):_ <- rmem n
+>              push i
+
+> rmem   :: Name -> ST Machine Mem
+> rmem n =  do me <- get mem
+>              return (filter ((==n).fst) me)
+
+> doo   :: Op -> ST Machine ()
+> doo o =  do i'<- ipop
+>             i <- ipop
+>             push (op o i i')
+
+> op     :: Op -> Int -> Int -> Int
+> op Add = (+)
+> op Sub = (-)
+> op Mul = (*)
+> op Div = div
+
+> jump  :: Label -> ST Machine ()
+> jump l = do co <- get code
+>             update (\m -> m {pc = head(elemIndices (LABEL l) co)})
+
+> jumpz   :: Label -> ST Machine ()
+> jumpz l = do i <- ipop
+>              if(i == 0) then jump l else update id
 
 e.g exec(comp(fac 10))
 
 = [('A',3628800),('B',0)]
+
+exec :: Code -> Mem
+
+execinst :: Inst -> ST Mem
+execinst (PUSH _) = push
 
 
 Hints and tips, have look at the tree relabling example with state monads to make sure you are comfortable.
@@ -182,7 +278,7 @@ label is behaving like a state, so a nicer way to write this function is using m
 
 compprog :: Prog -> ST Code
 
-> compprog :: Prog -> ST Code
+> compprog :: Prog -> ST Label Code
 > compprog (Seq [])        = return []
 > compprog (Assign n expr) = return (compexpr expr ++ [POP n])
 > compprog (If expr p1 p2) = do l <- fresh
@@ -201,7 +297,7 @@ compprog :: Prog -> ST Code
 > comp :: Prog -> Code
 > comp p = fst(app (compprog p) 0)
 
-> fresh :: ST Label
+> fresh :: ST Label Label
 > fresh =  S (\n -> (n, n+1))
 
 lets think about how compexpr would work. 
@@ -244,18 +340,16 @@ LABEL L2
 
 State monad:
 
-> type State = Label
+> newtype ST s a = S (s -> (a, s))
 >
-> newtype ST a = S (State -> (a, State))
->
-> app :: ST a -> State -> (a,State)
+> app :: ST s a -> s -> (a, s)
 > app (S st) x 	=  st x
 >
-> instance Functor ST where
+> instance Functor (ST s) where
 >    -- fmap :: (a -> b) -> ST a -> ST b
 >    fmap g st = S (\s -> let (x,s') = app st s in (g x, s'))
 >
-> instance Applicative ST where
+> instance Applicative (ST s) where
 >    -- pure :: a -> ST a
 >    pure x = S (\s -> (x,s))
 >
@@ -264,7 +358,7 @@ State monad:
 >       let (f,s')  = app stf s
 >           (x,s'') = app stx s' in (f x, s''))
 >
-> instance Monad ST where
+> instance Monad (ST s) where
 >    -- return :: a -> ST a
 >    return x = S (\s -> (x,s))
 >
