@@ -4,17 +4,29 @@ The Language
 >           | If Expr Prog Prog
 >           | While Expr Prog
 >           | Seq [Prog]
+>             deriving Show
 
 > data Expr = Val Int
 >           | Var Name
 >           | App Op Expr Expr
+>             deriving Show
 
+
+> testEx :: Expr
+> testEx =  App Add (App Mul (Val 2) (Var 'B')) (Val 4)
+
+> testProg :: Prog
+> testProg = Assign 'A' (Val 1)
+
+> testProg2 :: Prog
+> testProg2 = If (App Sub (Var 'A') (Var 'B')) (Assign 'A' (Val 1)) (Assign 'A' (Var 'B'))
 
 To simplify things we are saying you can only have single character variable names
 
 > type Name = Char
 
-> data Op = Add | Sub | Mull | Div
+> data Op = Add | Sub | Mul | Div
+>           deriving Show
 
 In our language we will use 0 as False, same convention as C/Java
 
@@ -59,7 +71,7 @@ Ours is a list of addresses, with names, and values at the address.
 
 Our machine also needs some code, an instruction set.
 
-> type Code = 
+> type Code = [Inst]
 
 > data Inst = PUSH Int
 >           | PUSHV Name
@@ -68,6 +80,7 @@ Our machine also needs some code, an instruction set.
 >           | JUMP Label
 >           | JUMPZ Label
 >           | LABEL Label
+>             deriving Show
 
 > type Label = Int
 
@@ -94,6 +107,30 @@ while B do  --> LABEL 0
             --> JUMP 0,
         --> LABEL 1
 
+Factorial example:
+
+> fac :: Int -> Prog
+> fac n = Seq [Assign 'A' (Val 1),
+>              Assign 'B' (Val n),
+>              While (Var 'B') (Seq
+>                 [Assign 'A' (App Mul (Var 'A') (Var 'B')),
+>                  Assign 'B' (App Sub (Var 'B') (Val (1)))])]
+
+example, assign two values to two variables, A and B, if they are the same do fac B, otherwise do fac A
+
+> complex :: Int -> Int -> Prog
+> complex a b = Seq [Assign 'A' (Val a),
+>                    Assign 'B' (Val b),
+>                    If (App Sub (Var 'A')(Var 'B')) (Seq [Assign 'C' (Val 1),
+>                                                          Assign 'B' (Var 'A'),
+>                                                          While (Var 'B') (Seq
+>                                                             [Assign 'C' (App Mul (Var 'C') (Var 'B')),
+>                                                              Assign 'B' (App Sub (Var 'B') (Val (1)))])]) 
+>                                                    (Seq [Assign 'C' (Val 1),
+>                                                          While (Var 'B') (Seq
+>                                                             [Assign 'C' (App Mul (Var 'C') (Var 'B')),
+>                                                              Assign 'B' (App Sub (Var 'B') (Val (1)))])])]
+
 --------------------------------------------------------------------------------------------
 Execution Function
 
@@ -112,13 +149,36 @@ Suggestions: write a compiler for expressions first:
 
 compexpr :: Expr -> Code
 
+> compexpr  :: Expr -> Code
+> compexpr (Val a) = [PUSH a]
+> compexpr (Var n) = [PUSHV n]
+> compexpr (App op ex1 ex2) = (compexpr ex1 ++ compexpr ex2) ++ [DO op]
+
 then (without monads)
 
 compprog :: Prog -> Label -> (Code, Label)
 
+> compprog :: Prog -> Label -> (Code, Label)
+> compprog (Seq []) l = ([],l)
+> compprog (Assign n expr) l = (compexpr expr ++ [POP n],l)
+> compprog (If expr p1 p2) l = (compexpr expr ++ [JUMPZ l] ++ fst(compprog p2 lEL) ++ [JUMP l'] ++ [LABEL l] ++ fst(compprog p1 lIF) ++ [LABEL l'],lNext)
+>                               where l' = l+1
+>                                     lEL = l'+1
+>                                     lIF = snd(compprog p2 lEL)+1
+>                                     lNext = snd(compprog p1 lIF)+1
+> compprog (While expr p)  l = ([LABEL l] ++ compexpr expr ++ [JUMPZ l'] ++ fst(compprog p lsub) ++ [JUMP l, LABEL l'],lNext)
+>                               where l' = l+1
+>                                     lsub = l'+1
+>                                     lNext = snd(compprog p lsub)
+> compprog (Seq (p:ps))      l = (fst(compprog p l) ++ fst(compprog (Seq ps) l'),l)
+>                               where l' = snd(compprog p l)
+
 label is behaving like a state, so a nicer way to write this function is using monads to produce:
 
 compprog :: Prog -> ST Code
+
+> comp  :: Prog -> Code
+> comp p = fst(compprog p 0)
 
 lets think about how compexpr would work. 
 given the expression (1+2)*(3+4)
@@ -150,8 +210,8 @@ If e then p else q --->
 
 code for e
 JUMPZ L1
-code for p
+code for q
 JUMP L2
 LABEL L1
-code for q
+code for p
 LABEL L2
