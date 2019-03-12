@@ -158,29 +158,51 @@ then (without monads)
 
 compprog :: Prog -> Label -> (Code, Label)
 
-> compprog :: Prog -> Label -> (Code, Label)
-> compprog (Seq []) l = ([],l)
-> compprog (Assign n expr) l = (compexpr expr ++ [POP n],l)
-> compprog (If expr p1 p2) l = (compexpr expr ++ [JUMPZ l] ++ fst(codeIf, nlIf) ++ [JUMP l'] ++ [LABEL l] ++ fst(codeElse, nlElse) ++ [LABEL l'],lNext)
->                               where l' = l+1
->                                     (codeIf, nlIf) = compprog p1 (l+2)
->                                     (codeElse, nlElse) = compprog p2 (snd(codeIf, nlIf))
->                                     lNext = snd(codeElse, nlElse)
-> compprog (While expr p)  l = ([LABEL l] ++ compexpr expr ++ [JUMPZ l'] ++ fst(codep, lp) ++ [JUMP l, LABEL l'],lNext)
->                               where l' = l+1
->                                     (codep, lp) = compprog p (l+2)
->                                     lNext = snd(codep, lp)
-> compprog (Seq (p:ps))      l = (fst(codep, lp) ++ fst(codeps, lps),lNext)
->                               where (codep, lp) = compprog p l
->                                     (codeps, lps) = compprog (Seq ps) lp
->                                     lNext = snd(codeps,lps)
+compprog :: Prog -> Label -> (Code, Label)
+compprog (Seq []) l = ([],l)
+compprog (Assign n expr) l = (compexpr expr ++ [POP n],l)
+compprog (If expr p1 p2) l = (compexpr expr ++ [JUMPZ l] ++ fst(codeIf, nlIf) ++ [JUMP l'] ++ [LABEL l] ++ fst(codeElse, nlElse) ++ [LABEL l'],lNext)
+                              where l' = l+1
+                                    (codeIf, nlIf) = compprog p1 (l+2)
+                                    (codeElse, nlElse) = compprog p2 (snd(codeIf, nlIf))
+                                    lNext = snd(codeElse, nlElse)
+compprog (While expr p)  l = ([LABEL l] ++ compexpr expr ++ [JUMPZ l'] ++ fst(codep, lp) ++ [JUMP l, LABEL l'],lNext)
+                              where l' = l+1
+                                    (codep, lp) = compprog p (l+2)
+                                    lNext = snd(codep, lp)
+compprog (Seq (p:ps))      l = (fst(codep, lp) ++ fst(codeps, lps),lNext)
+                              where (codep, lp) = compprog p l
+                                    (codeps, lps) = compprog (Seq ps) lp
+                                    lNext = snd(codeps,lps)
+
+comp  :: Prog -> Code
+comp p = fst(compprog p 0)
 
 label is behaving like a state, so a nicer way to write this function is using monads to produce:
 
 compprog :: Prog -> ST Code
 
-> comp  :: Prog -> Code
-> comp p = fst(compprog p 0)
+> compprog :: Prog -> ST Code
+> compprog (Seq [])        = return []
+> compprog (Assign n expr) = return (compexpr expr ++ [POP n])
+> compprog (If expr p1 p2) = do l <- fresh
+>                               l' <- fresh
+>                               ifn <- compprog p1
+>                               elsen <- compprog p2
+>                               return (compexpr expr ++ [JUMPZ l] ++ ifn ++ [JUMP l'] ++ [LABEL l] ++ elsen ++ [LABEL l'])
+> compprog (While expr p)  = do l <- fresh
+>                               l'<- fresh
+>                               sub <- compprog p
+>                               return ([LABEL l] ++ compexpr expr ++ [JUMPZ l'] ++ sub ++ [JUMP l, LABEL l'])
+> compprog (Seq (p:ps))    = do c <- compprog p
+>                               cs <- compprog (Seq ps)
+>                               return (c ++ cs)
+
+> comp :: Prog -> Code
+> comp p = fst(app (compprog p) 0)
+
+> fresh :: ST Label
+> fresh =  S (\n -> (n, n+1))
 
 lets think about how compexpr would work. 
 given the expression (1+2)*(3+4)
@@ -217,3 +239,34 @@ JUMP L2
 LABEL L1
 code for q
 LABEL L2
+
+-----------------------------------------------------------
+
+State monad:
+
+> type State = Label
+>
+> newtype ST a = S (State -> (a, State))
+>
+> app :: ST a -> State -> (a,State)
+> app (S st) x 	=  st x
+>
+> instance Functor ST where
+>    -- fmap :: (a -> b) -> ST a -> ST b
+>    fmap g st = S (\s -> let (x,s') = app st s in (g x, s'))
+>
+> instance Applicative ST where
+>    -- pure :: a -> ST a
+>    pure x = S (\s -> (x,s))
+>
+>    -- (<*>) :: ST (a -> b) -> ST a -> ST b
+>    stf <*> stx = S (\s ->
+>       let (f,s')  = app stf s
+>           (x,s'') = app stx s' in (f x, s''))
+>
+> instance Monad ST where
+>    -- return :: a -> ST a
+>    return x = S (\s -> (x,s))
+>
+>    -- (>>=) :: ST a -> (a -> ST b) -> ST b
+>    st >>= f = S (\s -> let (x,s') = app st s in app (f x) s')

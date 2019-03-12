@@ -1,6 +1,6 @@
 G52AFP Coursework 2 - Monadic Compiler
 
-Your full name(s)
+Thomas Cameron Gregory Dudley
 Your full email address(es)
 
 --------------------------------------------------------------------------------
@@ -79,3 +79,6 @@ State monad:
 >    st >>= f = S (\s -> let (x,s') = app st s in app (f x) s')
 
 --------------------------------------------------------------------------------
+
+compexpr :: Expr -> Code
+
