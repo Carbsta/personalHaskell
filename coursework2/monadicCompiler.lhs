@@ -1,6 +1,7 @@
 > import Data.List (elemIndices)
 > import Control.Lens ((^?),element)
 > import Data.Maybe
+> import Control.Monad.Writer
 
 The Language
 
@@ -170,7 +171,6 @@ Execution Function
 >                     if(i == 0) then jump l else update id
 > step (LABEL _) = update id
 
-
 get and upate are generic functions for manipulating our machine
 wrapped up in a State Transformer
 
@@ -226,6 +226,21 @@ wrapped up in a State Transformer
 > jumpz   :: Label -> ST Machine ()
 > jumpz l = do i <- ipop
 >              if(i == 0) then jump l else update id
+
+
+writing without monads
+
+hackExec :: Code -> Mem
+
+hackRun  :: Code -> (Stack, Mem, PC)
+
+hackStep :: Inst -> (Stack, Mem, PC) -> (Stack, Mem, PC)
+
+> hackpush     :: Int -> Stack -> Stack
+> hackpush i s =  i:s
+
+hackpop   :: Stack -> (Int, Stack) 
+
 
 e.g exec(comp(fac 10))
 
@@ -294,8 +309,48 @@ compprog :: Prog -> ST Code
 >                               cs <- compprog (Seq ps)
 >                               return (c ++ cs)
 
+
+> compprog' :: Prog -> WriterT Code (ST Label) ()
+> compprog' (Seq [])        = return ()
+> compprog' (Assign n expr) = do compexpr' expr
+>                                tell [POP n]
+> compprog' (If expr p1 p2) = do l <- fresh'
+>                                l'<- fresh'
+>                                compexpr' expr
+>                                tell [JUMPZ l]
+>                                compprog' p1
+>                                tell [JUMP l', LABEL l]
+>                                compprog' p2
+>                                tell [LABEL l']
+> compprog' (While expr p)  = do l <- fresh'
+>                                l'<- fresh'
+>                                tell [LABEL l]
+>                                compexpr' expr
+>                                tell [JUMPZ l']
+>                                compprog' p
+>                                tell [JUMP l, LABEL l']
+> compprog' (Seq (p:ps))    = do compprog' p
+>                                compprog' (Seq ps)
+
 > comp :: Prog -> Code
 > comp p = fst(app (compprog p) 0)
+
+
+> compexpr'  :: Expr -> WriterT Code (ST Label) ()
+> compexpr' (Val a) = tell [PUSH a]
+> compexpr' (Var n) = tell [PUSHV n]
+> compexpr' (App op ex1 ex2) = do compexpr' ex1 
+>                                 compexpr' ex2
+>                                 tell [DO op]
+
+comp' :: Prog -> Code
+comp' p = snd(runWriter (compprog' p))
+
+> comp'   :: Prog -> Code
+> comp' p =  fst(app (execWriterT (compprog' p)) 0)
+
+> fresh' :: WriterT Code (ST Label) Label
+> fresh' =  lift(S(\s -> (s, s+1)))
 
 > fresh :: ST Label Label
 > fresh =  S (\n -> (n, n+1))

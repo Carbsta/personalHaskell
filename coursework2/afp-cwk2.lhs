@@ -8,6 +8,7 @@ Your full email address(es)
 > import Data.List (elemIndices)
 > import Control.Lens ((^?),element)
 > import Data.Maybe
+> import Control.Monad.Writer
 
 
 Imperative language:
@@ -91,37 +92,48 @@ State monad  (I made it generic so it can also be used for execution of the mach
 
 --------------------------------------------------------------------------------
 
-Compilation
+Compilation, using the writer monad.
+I had to use the WriterT version I can also use the state monad.
 
-> compexpr  :: Expr -> Code
-> compexpr (Val a) = [PUSH a]
-> compexpr (Var n) = [PUSHV n]
-> compexpr (App op ex1 ex2) = (compexpr ex1 ++ compexpr ex2) ++ [DO op]
+> comp   :: Prog -> Code
+> comp p =  fst(app (execWriterT (compprog p)) 0)
 
-
-> compprog :: Prog -> ST Label Code
-> compprog (Seq [])        = return []
-> compprog (Assign n expr) = return (compexpr expr ++ [POP n])
+> compprog :: Prog -> WriterT Code (ST Label) ()
+> compprog (Seq [])        = return ()
+> compprog (Assign n expr) = do compexpr expr
+>                               tell [POP n]
 > compprog (If expr p1 p2) = do l <- fresh
->                               l' <- fresh
->                               ifn <- compprog p1
->                               elsen <- compprog p2
->                               return (compexpr expr ++ [JUMPZ l] ++ ifn ++ [JUMP l'] ++ [LABEL l] ++ elsen ++ [LABEL l'])
+>                               l'<- fresh
+>                               compexpr expr
+>                               tell [JUMPZ l]
+>                               compprog p1
+>                               tell [JUMP l', LABEL l]
+>                               compprog p2
+>                               tell [LABEL l']
 > compprog (While expr p)  = do l <- fresh
 >                               l'<- fresh
->                               sub <- compprog p
->                               return ([LABEL l] ++ compexpr expr ++ [JUMPZ l'] ++ sub ++ [JUMP l, LABEL l'])
-> compprog (Seq (p:ps))    = do c <- compprog p
->                               cs <- compprog (Seq ps)
->                               return (c ++ cs)
+>                               tell [LABEL l]
+>                               compexpr expr
+>                               tell [JUMPZ l']
+>                               compprog p
+>                               tell [JUMP l, LABEL l']
+> compprog (Seq (p:ps))    = do compprog p
+>                               compprog (Seq ps)
 
 
-> comp :: Prog -> Code
-> comp p = fst(app (compprog p) 0)
 
+> compexpr  :: Expr -> WriterT Code (ST Label) ()
+> compexpr (Val a) = tell [PUSH a]
+> compexpr (Var n) = tell [PUSHV n]
+> compexpr (App op ex1 ex2) = do compexpr ex1 
+>                                compexpr ex2
+>                                tell [DO op]
 
-> fresh :: ST Label Label
-> fresh =  S (\n -> (n, n+1))
+fresh generates a new label, I had to include lift
+to wrap it up in a WriterT monad.
+
+> fresh :: WriterT Code (ST Label) Label
+> fresh =  lift(S(\s -> (s, s+1)))
 
 
 --------------------------------------------------------------------------------
