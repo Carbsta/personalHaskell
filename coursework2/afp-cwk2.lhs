@@ -1,7 +1,7 @@
 G52AFP Coursework 2 - Monadic Compiler
 
 Thomas Cameron Gregory Dudley
-Your full email address(es)
+psytcd@nottingham.ac.uk
 
 --------------------------------------------------------------------------------
 
@@ -12,6 +12,9 @@ Your full email address(es)
 
 
 Imperative language:
+This is the specification provided by Graham, although I have also
+made Op derive Eq so the Inst type can derive Eq to allow my jump
+function to lookup 
 
 > data Prog = Assign Name Expr
 >           | If Expr Prog Prog
@@ -37,6 +40,11 @@ Factorial example:
 >                  Assign 'B' (App Sub (Var 'B') (Val (1)))])]
 
 Virtual machine:
+I defined a datatype Machine to wrap up all the fields of the machine, using the record syntax.
+This gives us some some nice functions for accessing all parts of our machine as well as avoiding
+having to pass around all the individual components.
+PC is a program counter that allows the machine to keep track of where it is in the code,
+and is used to index the code.
 
 > data Machine = M { stack :: Stack,
 >                    mem   :: Mem,
@@ -63,7 +71,9 @@ Virtual machine:
 > 
 > type Label = Int
 
-State monad  (I made it generic so it can also be used for execution of the machine):
+State monad as supplied by Graham,
+with the minor modification to parameterise the type.
+This allows us to represent our Machine as a state.
 
 > newtype ST s a = S (s -> (a, s))
 >
@@ -93,10 +103,29 @@ State monad  (I made it generic so it can also be used for execution of the mach
 --------------------------------------------------------------------------------
 
 Compilation, using the writer monad.
-I had to use the WriterT version I can also use the state monad.
+We use WriterT to allow us to still use the state monad.
+
+comp is simply a high level function that applies the result of execWriterT 
+to an initial label which we specify as 0.
+execWriterT extracts the result of a writer computation, which in our case
+is the result of compprog p.
+fst then extracts the code from the resulting tuple as we no longer care
+about the label.
 
 > comp   :: Prog -> Code
 > comp p =  fst(app (execWriterT (compprog p)) 0)
+
+compprog is a recursive function for compiling the code a token at a time.
+The two base cases are either when you have an empty sequence of programs,
+Seq [] or you have an Assign token.
+The recursive cases are the If, While and Non empty Seq.
+All of these statements contain more Programs that get passed to compprog.
+Expressions, in the Assign, If, and While statements are passed to compexpr.
+The function calls tell to build up a log using the WriterT monad, which is
+then accessed by calling execWriterT on the returned WriterT.
+A StateTransformer is used internally to increment the label by generating
+fresh labels. The function fresh generates a fresh label, wrapped up in the
+WriterT machinary using the function Lift.
 
 > compprog :: Prog -> WriterT Code (ST Label) ()
 > compprog (Seq [])        = return ()
@@ -120,7 +149,11 @@ I had to use the WriterT version I can also use the state monad.
 > compprog (Seq (p:ps))    = do compprog p
 >                               compprog (Seq ps)
 
-
+compexpr takes an expression and returns a WriterT Code monad
+which contains the StateTransformer as well. It uses tell
+to build the log of the WriterT like in compprog.
+It is recursive, with the base cases being Var and Val expressions,
+and the recursive case being an App expression.
 
 > compexpr  :: Expr -> WriterT Code (ST Label) ()
 > compexpr (Val a) = tell [PUSH a]
@@ -140,8 +173,35 @@ to wrap it up in a WriterT monad.
 
 Execution:
 
+To avoid passing around respresentations of memory, stack and a program counter
+through convoluted curried functions, I decided to take the more conceptually
+clear approach of respresenting a Machine as a State and using the ST monad
+to pass this state through the execution.
+I intially wrote it the more "hacky" way of passing memory, stack etc around 
+in the same way that I initally wrote the compilation functions without
+the state monad, but in my opinion this monadic version is conceptually better
+as it makes sense to think about our Virtual Machine as type of State Machine.
+It comes with the initial cost of having to define a couple of generic helper functions
+to manipulate the stack, mem and pc values, but makes the actual exec and step
+functions far clearer.
+
+exec is our highest level execution function that creates and initial machine
+with an empty stack and memory, a program counter initialised to instruction 0
+and the code of the machine set to the code passed into the function.
+It then applies the run function to this machine, and then extracts the result
+and wraps it up in a Mem.
+
 > exec   :: Code -> Mem
 > exec c =  mem(snd(app (run) M {stack = [], mem = [], pc = 0, code = c}))
+
+The run function simply runs a Machine until it terminates, which is determined
+by when the program counter of the machine doesn't index the code. We use two
+functions from the Lens library, ^? and element, to index the code.
+if the program counter is not an index of the code l is Nothing and the machine
+is unchanged. (by calling update with the id function)
+when l is not nothing, so is an instruction, step is called to handle the single
+instruction, updating the machine, the helper function next then increments the
+program counter and run is called recursively.
 
 > run  :: ST Machine ()
 > run  = do co <- get code
@@ -154,6 +214,8 @@ Execution:
 >           else
 >             update id         
 
+
+
 > step :: Inst -> ST Machine ()
 > step (PUSH i)  = push i
 > step (PUSHV n) = pushv n
@@ -165,7 +227,7 @@ Execution:
 > step (LABEL _) = update id
 
 
-next and jump are functions for manipulating the program counter:
+next and jump are helper functions for manipulating the program counter:
 
 > next :: ST Machine ()
 > next = update (\m -> m {pc = (pc m)+1})
@@ -183,7 +245,7 @@ internal state of the machine:
 > update   :: (Machine -> Machine) -> ST Machine ()
 > update f = S (\m -> ((),f m))
 
-ipop is used internally when passing the integer values around,
+ipop is used internally when passing the integer values around, but we don't want any side effects with memory,
 e.g to then be used in a Do operation:
 
 > ipop :: ST Machine Int
@@ -195,11 +257,11 @@ rmem is used to get the memory at the specified name,
 the memory value returned is empty if there is 
 nothing stored at that address.
 
-> rmem   :: Name -> ST Machine Mem
+> rmem   :: Name -> ST Machine Int
 > rmem n =  do me <- get mem
->              return (filter ((==n).fst) me)
+>              return (fromJust (lookup n me))
 
-The following functions are all called by step,
+The following helper functions are all called by step,
 and have been taken out of the step function for clarity:
 
 > pop   :: Name -> ST Machine ()
@@ -215,7 +277,7 @@ and have been taken out of the step function for clarity:
 > push i = update (\m -> m {stack = i:stack m})
 
 > pushv  :: Name -> ST Machine ()
-> pushv n = do (n',i):_ <- rmem n
+> pushv n = do i <- rmem n
 >              push i
 
 > doo   :: Op -> ST Machine ()
