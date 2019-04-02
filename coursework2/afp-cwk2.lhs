@@ -6,7 +6,6 @@ psytcd@nottingham.ac.uk
 --------------------------------------------------------------------------------
 
 > import Data.List (elemIndices)
-> import Control.Lens ((^?),element)
 > import Data.Maybe
 > import Control.Monad.Writer
 
@@ -101,7 +100,6 @@ This allows us to represent our Machine as a state.
 >    st >>= f = S (\s -> let (x,s') = app st s in app (f x) s')
 
 --------------------------------------------------------------------------------
-
 Compilation, using the writer monad.
 We use WriterT to allow us to still use the state monad.
 
@@ -115,6 +113,9 @@ about the label.
 > comp   :: Prog -> Code
 > comp p =  fst(app (execWriterT (compprog p)) 0)
 
+--------------------------------------------------------------------------------
+compprog
+
 compprog is a recursive function for compiling the code a token at a time.
 The two base cases are either when you have an empty sequence of programs,
 Seq [] or you have an Assign token.
@@ -125,7 +126,7 @@ The function calls tell to build up a log using the WriterT monad, which is
 then accessed by calling execWriterT on the returned WriterT.
 A StateTransformer is used internally to increment the label by generating
 fresh labels. The function fresh generates a fresh label, wrapped up in the
-WriterT machinary using the function Lift.
+WriterT machinery using the function Lift.
 
 > compprog :: Prog -> WriterT Code (ST Label) ()
 > compprog (Seq [])        = return ()
@@ -149,6 +150,9 @@ WriterT machinary using the function Lift.
 > compprog (Seq (p:ps))    = do compprog p
 >                               compprog (Seq ps)
 
+--------------------------------------------------------------------------------
+compexpr
+
 compexpr takes an expression and returns a WriterT Code monad
 which contains the StateTransformer as well. It uses tell
 to build the log of the WriterT like in compprog.
@@ -170,7 +174,6 @@ to wrap it up in a WriterT monad.
 
 
 --------------------------------------------------------------------------------
-
 Execution:
 
 To avoid passing around respresentations of memory, stack and a program counter
@@ -181,9 +184,9 @@ I intially wrote it the more "hacky" way of passing memory, stack etc around
 in the same way that I initally wrote the compilation functions without
 the state monad, but in my opinion this monadic version is conceptually better
 as it makes sense to think about our Virtual Machine as type of State Machine.
-It comes with the initial cost of having to define a couple of generic helper functions
-to manipulate the stack, mem and pc values, but makes the actual exec and step
-functions far clearer.
+It comes with the initial cost of having to define a couple of generic helper 
+functions to manipulate the stack, mem and pc values, 
+but makes the actual exec and step functions far clearer.
 
 exec is our highest level execution function that creates and initial machine
 with an empty stack and memory, a program counter initialised to instruction 0
@@ -194,59 +197,124 @@ and wraps it up in a Mem.
 > exec   :: Code -> Mem
 > exec c =  mem(snd(app (run) M {stack = [], mem = [], pc = 0, code = c}))
 
+--------------------------------------------------------------------------------
+run
+
 The run function simply runs a Machine until it terminates, which is determined
-by when the program counter of the machine doesn't index the code. We use two
-functions from the Lens library, ^? and element, to index the code.
-if the program counter is not an index of the code l is Nothing and the machine
-is unchanged. (by calling update with the id function)
-when l is not nothing, so is an instruction, step is called to handle the single
-instruction, updating the machine, the helper function next then increments the
+by when the program counter of the machine doesn't index the code.
+When the program counter is less than length of the code, so still indexes an 
+instruction,
+step is called to handle the single instruction returned from co!!c,
+updating the machine. The helper function next then increments the
 program counter and run is called recursively.
 
 > run  :: ST Machine ()
 > run  = do co <- get code
 >           c  <- get pc
->           let l = co ^? element c
->           if (l /= Nothing) then 
->             step (fromJust l) >>
+>           if (c < length co) then 
+>             step (co!!c) >>
 >             next >>
 >             run
 >           else
 >             update id         
 
+--------------------------------------------------------------------------------
+step
 
+step executes a single instruction, a single step of the computation.
+It takes an instruction and returns a ST Machine which contains
+the modified Machine and returns nothing.
+
+For a push instruction we simply update the machine with the value
+on the front of the stack.
+
+For a pushv instruction we first fetch this value from memory using the function
+rmem (read memory) and then perform a normal push by simply calling step again
+but with a push instruction and the value.
+
+For a pop instruction we get the first value on the stack using the ipop function,
+retrive the memory from the machine and then we have two cases:
+If the variable is not in memory, we add it to the end of memory with the value.
+Otherwise we replace where it occurs in memory with the new value.
+An append could be avoided by placing new variables at the start of memory,
+if we conceptualise memory growing backwards like a stack, however as per
+the specification and for "niceness" variables appear in memory in the order
+they are defined (and used) in the program, so we add them to the end
+of the memory using an append.
+
+for a do instruction we use ipop to get the top two values
+from the stack. Then we apply the operator to these values,
+and push this value to the stack, again reusing code by calling step.
+
+for a jump instruction, we get the code from the machine,
+and update the program counter with the index of the label instruction
+that matches the jump instruction. the elemIndices function returns
+occurences of an element in a list, and we just grab the first as there
+will only ever be one LABEL X instruction in the code.
+
+Jumpz is just jump with an extra step, first we check if the top
+value of the stack is 0, using ipop, and if so we do a jump as before
+(again, calling step to reuse code) if not, we do nothing for this step
+by simply updating with the id function.
+
+Label instructions do nothing, so we just update the machine
+with the id function.
 
 > step :: Inst -> ST Machine ()
-> step (PUSH i)  = push i
-> step (PUSHV n) = pushv n
-> step (POP n)   = pop n
-> step (DO o)    = doo o
-> step (JUMP l)  = jump l
+> step (PUSH i)  = update (\m -> m {stack = i:stack m})
+> step (PUSHV n) = do i <- rmem n
+>                     step (PUSH i)
+> step (POP n)   = do i <- ipop
+>                     me <- get mem
+>                     if ((lookup n me) == Nothing) 
+>                     then update (\m -> m {mem = me++[(n,i)]})
+>                     else update (\m -> m {mem = map (\p@(n',_) -> if n' == n then (n,i) else p) me})
+> step (DO o)    = do i'<- ipop
+>                     i <- ipop
+>                     step (PUSH (op o i i'))
+> step (JUMP l)  = do co <- get code
+>                     update (\m -> m {pc = head(elemIndices (LABEL l) co)})
 > step (JUMPZ l) = do i <- ipop
->                     if(i == 0) then jump l else update id
+>                     if(i == 0) then step (JUMP l) else update id
 > step (LABEL _) = update id
 
+--------------------------------------------------------------------------------
+next
 
-next and jump are helper functions for manipulating the program counter:
+next simply increments the program counter of the machine,
+wrapped up inside the ST machinery using our update function.
 
 > next :: ST Machine ()
 > next = update (\m -> m {pc = (pc m)+1})
 
-> jump  :: Label -> ST Machine ()
-> jump l = do co <- get code
->             update (\m -> m {pc = head(elemIndices (LABEL l) co)})
+--------------------------------------------------------------------------------
+get and update
 
 get and update are generic functions that allow us to manipulate the
-internal state of the machine:
+internal state of the machine. These two functions are the extra step
+compared to just passing around the stack and memory without the state,
+as step is defined interms of them.
+
+get takes a function that takes a machine and returns a value 
+(such as the ones provided by the record syntax we used to define Machine)
+and returns this value wrapped up in our ST.
 
 > get :: (Machine -> a) -> ST Machine a
 > get f = S (\m -> (f m,m))
 
+update allows us to apply any function that manipulates a Machine
+to a Machine wrapped up in a ST, returning nothing as its purely
+for updating the state of the Machine.
+
 > update   :: (Machine -> Machine) -> ST Machine ()
 > update f = S (\m -> ((),f m))
 
-ipop is used internally when passing the integer values around, but we don't want any side effects with memory,
-e.g to then be used in a Do operation:
+--------------------------------------------------------------------------------
+ipop and rmem
+
+ipop is used internally to get the top value of the stack,
+but we don't want the memory to be updated like a normal pop,
+for example to then be used in a Do operation.
 
 > ipop :: ST Machine Int
 > ipop = do x:xs <- get stack
@@ -254,39 +322,22 @@ e.g to then be used in a Do operation:
 >           return x
 
 rmem is used to get the memory at the specified name,
-the memory value returned is empty if there is 
-nothing stored at that address.
+lookup is used to get the right value of a tuple with
+the left value acting as a key, this value is wrapped
+up in a Maybe value, since we don't need to worry about
+runtime crashes we can just extract it with fromJust.
+(otherwise we would have to propagate the error
+through our higher level functions too).
 
 > rmem   :: Name -> ST Machine Int
 > rmem n =  do me <- get mem
 >              return (fromJust (lookup n me))
 
-The following helper functions are all called by step,
-and have been taken out of the step function for clarity:
-
-> pop   :: Name -> ST Machine ()
-> pop n = do i <- ipop
->            me <- get mem
->            let xs = takeWhile(nmatch) me
->                ys = drop 1 $ dropWhile(nmatch) me
->                nmatch = ((/=n).fst)
->            update (\m -> m {mem = xs ++ (n,i): ys})
-
-
-> push :: Int -> ST Machine ()
-> push i = update (\m -> m {stack = i:stack m})
-
-> pushv  :: Name -> ST Machine ()
-> pushv n = do i <- rmem n
->              push i
-
-> doo   :: Op -> ST Machine ()
-> doo o =  do i'<- ipop
->             i <- ipop
->             push (op o i i')
+--------------------------------------------------------------------------------
+op
 
 op takes an operator and two ints and applies the operator
-in the order a Op b:
+in the order a Op b and returns the result.
 
 > op     :: Op -> Int -> Int -> Int
 > op Add = (+)
