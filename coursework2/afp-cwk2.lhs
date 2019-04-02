@@ -188,7 +188,7 @@ It comes with the initial cost of having to define a couple of generic helper
 functions to manipulate the stack, mem and pc values, 
 but makes the actual exec and step functions far clearer.
 
-exec is our highest level execution function that creates and initial machine
+exec is our highest level execution function that creates an initial machine
 with an empty stack and memory, a program counter initialised to instruction 0
 and the code of the machine set to the code passed into the function.
 It then applies the run function to this machine, and then extracts the result
@@ -344,3 +344,5 @@ in the order a Op b and returns the result.
 > op Sub = (-)
 > op Mul = (*)
 > op Div = div
+
+EOF
