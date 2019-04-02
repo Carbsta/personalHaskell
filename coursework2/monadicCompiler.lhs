@@ -201,12 +201,12 @@ wrapped up in a State Transformer
 > push i = update (\m -> m {stack = i:stack m})
 
 > pushv  :: Name -> ST Machine ()
-> pushv n = do (n',i):_ <- rmem n
+> pushv n = do i <- rmem n
 >              push i
 
-> rmem   :: Name -> ST Machine Mem
+> rmem   :: Name -> ST Machine Int
 > rmem n =  do me <- get mem
->              return (filter ((==n).fst) me)
+>              return (fromJust (lookup n me))
 
 > doo   :: Op -> ST Machine ()
 > doo o =  do i'<- ipop
